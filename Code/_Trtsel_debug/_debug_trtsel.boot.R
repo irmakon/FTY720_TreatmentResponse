@@ -1,0 +1,73 @@
+# to be copy-pasted within the following function:
+# fixInNamespace("trtsel.boot", pos = "package:TreatmentSelection", editor = "internal")
+
+function (formula, treatment.name, data, d = 0, rho = NULL, study.design, 
+          family, disc.rec.no.trt = NULL, provided_risk = NULL, prediction.time) 
+{
+  if (family$family == "risks_provided") {
+    fittedrisk.t0 <- provided_risk[, 1]
+    fittedrisk.t1 <- provided_risk[, 2]
+    linkinvfun <- NULL
+    coef <- NULL
+  }
+  else if (family$family == "time-to-event") {
+    coxfit <- do.call(coxph, list(formula, data))
+    fittedrisk.t0 <- get.risk.t_coxph(coxfit, treatment.name, 
+                                      data, prediction.time, t = 0)
+    fittedrisk.t1 <- get.risk.t_coxph(coxfit, treatment.name, 
+                                      data, prediction.time, t = 1)
+    coef <- summary(coxfit)$coefficients
+  }
+  else {
+    coef <- get.coef(formula, treatment.name, data, study.design, 
+                     rho, family)
+    linkinvfun <- family$linkinv
+    fittedrisk.t0 <- get.risk.t(coef[, 1], formula, treatment.name, 
+                                data, linkinvfun, t = 0)
+    fittedrisk.t1 <- get.risk.t(coef[, 1], formula, treatment.name, 
+                                data, linkinvfun, t = 1)
+  }
+  model.fit <- list(coefficients = coef, cohort.attributes = rho, 
+                    study.design = study.design, family = family)
+  trt <- data[[treatment.name]]
+  trt.effect <- fittedrisk.t0 - fittedrisk.t1
+  event.name = as.character(formula[[2]])
+  marker.names = all.vars(formula)[!is.element(all.vars(formula), 
+                                               c(event.name, treatment.name))]
+  if (length(marker.names) == 1) {
+    marker = data[[marker.names]]
+  }
+  else {
+    marker = NULL
+  }
+  if (is.null(disc.rec.no.trt)) {
+    rec.no.trt <- ifelse(trt.effect < d, 1, 0)
+  }
+  else {
+    rec.no.trt <- as.numeric(marker == disc.rec.no.trt)
+  }
+  derived.data <- data.frame(data[, c(all.vars(formula))], 
+                             fittedrisk.t0 = fittedrisk.t0, fittedrisk.t1 = fittedrisk.t1, 
+                             trt.effect = trt.effect)
+  if (family$family == "time-to-event" | length(event.name) > 
+      1) {
+    tmp <- with(data, eval(formula[[2]]))
+    wi = numeric(nrow(data))
+    wi[trt == 1] <- get.censoring.weights(ti = prediction.time, 
+                                          stime = tmp[trt == 1, 1], status = tmp[trt == 1, 
+                                                                                 2])
+    wi[trt == 0] <- get.censoring.weights(ti = prediction.time, 
+                                          stime = tmp[trt == 0, 1], status = tmp[trt == 0, 
+                                                                                 2])
+    derived.data$censoring.weights <- wi
+  }
+  if (is.null(data$rec.no.trt)) {
+    rec.trt <- 1 - rec.no.trt
+    derived.data$rec.trt <- rec.trt
+  }
+  else {
+    derived.data$rec.no.trt <- rec.no.trt
+  }
+  out <- list(derived.data = derived.data, model.fit = model.fit)
+  out
+}
